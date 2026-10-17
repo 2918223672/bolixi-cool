@@ -66,7 +66,7 @@ int main(int argc, char * argv[])
     if (!display) continue;
     cv::putText(img, cv::format("%.1f fps | %.1f ms | >25ms: %zu", 1 / dt, dt * 1000, long_intervals),
                 {20, 35}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 2);
-    cv::imshow("Hikrobot live - q to quit", img);
-    if (cv::waitKey(1) == 'q') break;
+    cv::imshow("Hikrobot live - ESC to quit", img);
+    if (cv::waitKey(1) == 27) break;
   }
 }

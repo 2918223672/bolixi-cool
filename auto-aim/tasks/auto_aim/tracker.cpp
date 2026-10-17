@@ -22,6 +22,28 @@ Tracker::Tracker(const std::string & config_path, Solver & solver)
   max_temp_lost_count_ = yaml["max_temp_lost_count"].as<int>();
   outpost_max_temp_lost_count_ = yaml["outpost_max_temp_lost_count"].as<int>();
   normal_temp_lost_count_ = max_temp_lost_count_;
+
+  const auto ekf = yaml["ekf"];
+  if (ekf) {
+    if (ekf["acceleration"]) noise_params_.acceleration = ekf["acceleration"].as<double>();
+    if (ekf["angular_acceleration"])
+      noise_params_.angular_acceleration = ekf["angular_acceleration"].as<double>();
+    if (ekf["outpost_acceleration"])
+      noise_params_.outpost_acceleration = ekf["outpost_acceleration"].as<double>();
+    if (ekf["outpost_angular_acceleration"])
+      noise_params_.outpost_angular_acceleration = ekf["outpost_angular_acceleration"].as<double>();
+    if (ekf["center_yaw_noise"]) noise_params_.center_yaw = ekf["center_yaw_noise"].as<double>();
+    if (ekf["center_pitch_noise"])
+      noise_params_.center_pitch = ekf["center_pitch_noise"].as<double>();
+    if (ekf["distance_noise_base"])
+      noise_params_.distance_base = ekf["distance_noise_base"].as<double>();
+    if (ekf["distance_angle_scale"])
+      noise_params_.distance_angle_scale = ekf["distance_angle_scale"].as<double>();
+    if (ekf["armor_yaw_noise_base"])
+      noise_params_.armor_yaw_base = ekf["armor_yaw_noise_base"].as<double>();
+    if (ekf["armor_yaw_distance_scale"])
+      noise_params_.armor_yaw_distance_scale = ekf["armor_yaw_distance_scale"].as<double>();
+  }
 }
 
 std::string Tracker::state() const { return state_; }
@@ -149,22 +171,22 @@ bool Tracker::set_target(std::list<Armor> & armors, std::chrono::steady_clock::t
 
   if (is_balance) {
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}};
-    target_ = Target(armor, t, 0.2, 2, P0_dig);
+    target_ = Target(armor, t, 0.2, 2, P0_dig, noise_params_);
   }
 
   else if (armor.name == ArmorName::outpost) {
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 81, 0.4, 100, 1e-4, 0, 0}};
-    target_ = Target(armor, t, 0.2765, 3, P0_dig);
+    target_ = Target(armor, t, 0.2765, 3, P0_dig, noise_params_);
   }
 
   else if (armor.name == ArmorName::base) {
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1e-4, 0, 0}};
-    target_ = Target(armor, t, 0.3205, 3, P0_dig);
+    target_ = Target(armor, t, 0.3205, 3, P0_dig, noise_params_);
   }
 
   else {
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}};
-    target_ = Target(armor, t, 0.2, 4, P0_dig);
+    target_ = Target(armor, t, 0.2, 4, P0_dig, noise_params_);
   }
 
   return true;
@@ -191,7 +213,7 @@ bool Tracker::update_target(std::list<Armor> & armors, std::chrono::steady_clock
     )
       continue;
 
-    solver_.solve(armor);
+    solver_.solve(armor, target_.ekf_x()[6]);
 
     target_.update(armor);
   }

@@ -2,6 +2,8 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "tools/logger.hpp"
@@ -42,6 +44,32 @@ Solver::Solver(const std::string & config_path) : R_gimbal2world_(Eigen::Matrix3
   Eigen::Matrix<double, 1, 5> distort_coeffs(distort_coeffs_data.data());
   cv::eigen2cv(camera_matrix, camera_matrix_);
   cv::eigen2cv(distort_coeffs, distort_coeffs_);
+
+  const auto yaw_optimizer = yaml["yaw_optimizer"];
+  yaw_optimizer_enabled_ =
+    yaw_optimizer && yaw_optimizer["enabled"] ? yaw_optimizer["enabled"].as<bool>() : false;
+  use_sjtu_cost_ = yaw_optimizer && yaw_optimizer["use_sjtu_cost"]
+                     ? yaw_optimizer["use_sjtu_cost"].as<bool>()
+                     : true;
+  yaw_search_iterations_ =
+    yaw_optimizer && yaw_optimizer["iterations"] ? yaw_optimizer["iterations"].as<int>() : 12;
+  normal_search_half_angle_ = (yaw_optimizer && yaw_optimizer["normal_search_half_angle"]
+                                 ? yaw_optimizer["normal_search_half_angle"].as<double>()
+                                 : 45.0) *
+                              CV_PI / 180.0;
+  outpost_search_half_angle_ = (yaw_optimizer && yaw_optimizer["outpost_search_half_angle"]
+                                  ? yaw_optimizer["outpost_search_half_angle"].as<double>()
+                                  : 75.0) *
+                               CV_PI / 180.0;
+  sjtu_slope_weight_ = yaw_optimizer && yaw_optimizer["slope_weight"]
+                         ? yaw_optimizer["slope_weight"].as<double>()
+                         : 2.0;
+
+  yaw_search_iterations_ = std::max(1, yaw_search_iterations_);
+  normal_search_half_angle_ = std::clamp(normal_search_half_angle_, 1.0 * CV_PI / 180.0, CV_PI / 2);
+  outpost_search_half_angle_ =
+    std::clamp(outpost_search_half_angle_, 1.0 * CV_PI / 180.0, CV_PI / 2);
+  sjtu_slope_weight_ = std::max(0.0, sjtu_slope_weight_);
 }
 
 Eigen::Matrix3d Solver::R_gimbal2world() const { return R_gimbal2world_; }
@@ -53,7 +81,7 @@ void Solver::set_R_gimbal2world(const Eigen::Quaterniond & q)
 }
 
 //solvePnP（获得姿态）
-void Solver::solve(Armor & armor) const
+void Solver::solve(Armor & armor, std::optional<double> predicted_yaw) const
 {
   const auto & object_points =
     (armor.type == ArmorType::big) ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
@@ -76,6 +104,7 @@ void Solver::solve(Armor & armor) const
   Eigen::Matrix3d R_armor2world = R_gimbal2world_ * R_armor2gimbal;
   armor.ypr_in_gimbal = tools::eulers(R_armor2gimbal, 2, 1, 0);
   armor.ypr_in_world = tools::eulers(R_armor2world, 2, 1, 0);
+  armor.yaw_raw = armor.ypr_in_world[0];
 
   armor.ypd_in_world = tools::xyz2ypd(armor.xyz_in_world);
 
@@ -85,7 +114,7 @@ void Solver::solve(Armor & armor) const
                      armor.name == ArmorName::five);
   if (is_balance) return;
 
-  optimize_yaw(armor);
+  if (yaw_optimizer_enabled_) optimize_yaw(armor, predicted_yaw);
 }
 
 std::vector<cv::Point2f> Solver::reproject_armor(
@@ -194,28 +223,39 @@ double Solver::oupost_reprojection_error(Armor armor, const double & pitch)
   return error;
 }
 
-void Solver::optimize_yaw(Armor & armor) const
+void Solver::optimize_yaw(Armor & armor, std::optional<double> predicted_yaw) const
 {
   Eigen::Vector3d gimbal_ypr = tools::eulers(R_gimbal2world_, 2, 1, 0);
+  const double half_angle =
+    armor.name == ArmorName::outpost ? outpost_search_half_angle_ : normal_search_half_angle_;
+  double left = gimbal_ypr[0] - half_angle;
+  double right = gimbal_ypr[0] + half_angle;
+  const double inclined =
+    predicted_yaw.has_value() ? tools::limit_rad(*predicted_yaw - gimbal_ypr[0]) : CV_PI / 4.0;
 
-  constexpr double SEARCH_RANGE = 140;  // degree
-  auto yaw0 = tools::limit_rad(gimbal_ypr[0] - SEARCH_RANGE / 2 * CV_PI / 180.0);
+  constexpr double PHI = 0.6180339887498949;
+  double middle_left = right - (right - left) * PHI;
+  double middle_right = left + (right - left) * PHI;
+  double left_cost = armor_reprojection_error(armor, middle_left, inclined);
+  double right_cost = armor_reprojection_error(armor, middle_right, inclined);
 
-  auto min_error = 1e10;
-  auto best_yaw = armor.ypr_in_world[0];
-
-  for (int i = 0; i < SEARCH_RANGE; i++) {
-    double yaw = tools::limit_rad(yaw0 + i * CV_PI / 180.0);
-    auto error = armor_reprojection_error(armor, yaw, (i - SEARCH_RANGE / 2) * CV_PI / 180.0);
-
-    if (error < min_error) {
-      min_error = error;
-      best_yaw = yaw;
+  for (int i = 0; i < yaw_search_iterations_; ++i) {
+    if (left_cost < right_cost) {
+      right = middle_right;
+      middle_right = middle_left;
+      right_cost = left_cost;
+      middle_left = right - (right - left) * PHI;
+      left_cost = armor_reprojection_error(armor, middle_left, inclined);
+    } else {
+      left = middle_left;
+      middle_left = middle_right;
+      left_cost = right_cost;
+      middle_right = left + (right - left) * PHI;
+      right_cost = armor_reprojection_error(armor, middle_right, inclined);
     }
   }
 
-  armor.yaw_raw = armor.ypr_in_world[0];
-  armor.ypr_in_world[0] = best_yaw;
+  armor.ypr_in_world[0] = tools::limit_rad((left + right) / 2.0);
 }
 
 double Solver::SJTU_cost(
@@ -243,9 +283,8 @@ double Solver::SJTU_cost(
     double angular_dis = ref_d.norm() * tools::get_abs_angle(ref_d, pt_d) / ref_d.norm();
     // 平方可能是为了配合 sin 和 cos
     // 弧度差代价（0 度左右占比应该大）
-    double cost_i =
-      tools::square(pixel_dis * std::sin(inclined)) +
-      tools::square(angular_dis * std::cos(inclined)) * 2.0;  // DETECTOR_ERROR_PIXEL_BY_SLOPE
+    double cost_i = tools::square(pixel_dis * std::sin(inclined)) +
+                    tools::square(angular_dis * std::cos(inclined)) * sjtu_slope_weight_;
     // 重投影像素误差越大，越相信斜率
     cost += std::sqrt(cost_i);
   }
@@ -256,10 +295,10 @@ double Solver::armor_reprojection_error(
   const Armor & armor, double yaw, const double & inclined) const
 {
   auto image_points = reproject_armor(armor.xyz_in_world, yaw, armor.type, armor.name);
-  auto error = 0.0;
-  for (int i = 0; i < 4; i++) error += cv::norm(armor.points[i] - image_points[i]);
-  // auto error = SJTU_cost(image_points, armor.points, inclined);
+  if (use_sjtu_cost_) return SJTU_cost(image_points, armor.points, inclined);
 
+  double error = 0.0;
+  for (int i = 0; i < 4; i++) error += cv::norm(armor.points[i] - image_points[i]);
   return error;
 }
 

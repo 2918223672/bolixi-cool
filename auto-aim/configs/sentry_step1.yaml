@@ -31,10 +31,31 @@ max_armor_ratio: 5
 max_side_ratio: 1.5
 max_rectangular_error: 25 # degree
 
+#####-----yaw重投影优化-----#####
+yaw_optimizer:
+  enabled: false # 旧demo回放跟踪率下降，实车验证后再开启
+  use_sjtu_cost: true
+  iterations: 12
+  normal_search_half_angle: 45 # degree
+  outpost_search_half_angle: 75 # degree
+  slope_weight: 2.0
+
 #####-----tracker参数-----#####
 min_detect_count: 5
 max_temp_lost_count: 15
 outpost_max_temp_lost_count: 75
+
+ekf:
+  acceleration: 100.0
+  angular_acceleration: 400.0
+  outpost_acceleration: 10.0
+  outpost_angular_acceleration: 0.1
+  center_yaw_noise: 0.004
+  center_pitch_noise: 0.004
+  distance_noise_base: 1.0
+  distance_angle_scale: 1.0
+  armor_yaw_noise_base: 0.09
+  armor_yaw_distance_scale: 0.005
 
 #####-----aimer参数-----#####
 yaw_offset: 2 # degree -2.5
@@ -50,6 +71,11 @@ first_tolerance: 3 # 近距离射击容差，degree
 second_tolerance: 2 # 远距离射击容差，degree
 judge_distance: 2 #距离判断阈值
 auto_fire: false # 第一步只验证通信和角度，不请求开火
+
+record:
+  enabled: false
+  fps: 60.0
+  directory: records
 
 camera_name: "hikrobot"
 exposure_ms: 10

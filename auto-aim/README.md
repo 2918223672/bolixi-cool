@@ -53,6 +53,52 @@ cmake --build build_clean -j2
 
 `tests/` 中这些程序是交互式调试工具，不是自动单元测试。`calibration/` 保留内参、手眼标定和采图工具。相机内参、手眼外参、云台轴方向和偏移需要针对自己的机器人核实；本次整理没有重新标定。
 
+### Yaw 搜索与 EKF 参数
+
+`yaw_optimizer` 控制装甲板 yaw 重投影搜索。当前实现采用 QD/SJTU 风格的像素位置与边斜率联合代价，并使用 12 次黄金分割搜索；普通目标默认搜索云台 yaw 两侧 45 度，前哨站默认两侧 75 度。跟踪建立后使用 EKF 预测 yaw 作为代价方向先验，目标丢失时使用 45 度初值。当前只接入单装甲搜索，没有移植 QD 的双装甲联合代价。`use_sjtu_cost: false` 可退回普通四角点距离代价，`enabled: false` 可关闭 yaw 修正。`demo.yaml` 开启该功能用于离线调参；两份实车配置暂时关闭，因为旧 demo 对照中开启后跟踪率从 97.34% 降至 92.69%，必须用本车录像重新验证后再开启。
+
+`ekf` 下的过程噪声和观测噪声已经外置，可以通过录像批量比较。NIS 使用更新前的创新和创新协方差计算；当前 4 维观测的 95% 卡方阈值为 9.487729。NIS 是滤波一致性指标，不是实际位置或 yaw 的真值误差。
+
+### 同步录制与回放
+
+在实车配置中启用以下选项后，`standard` 会把选中的每帧图像、该帧使用的 IMU 四元数和弹速作为同一个队列元素写入磁盘，并在同目录保存当次 YAML：
+
+```yaml
+record:
+  enabled: true
+  fps: 60.0
+  directory: records
+```
+
+录像由同名 `.avi` 和 `.txt` 组成。新文本格式每行依次为时间、四元数 `w x y z` 和弹速，旧版没有弹速的 5 列记录仍可回放。`fps` 是最大选帧频率和 AVI 标称帧率；实际间隔以文本时间戳为准。离线输出汇总指标和逐帧 JSONL：
+
+```bash
+./build/auto_aim_test \
+  --display=false \
+  --config-path=configs/demo.yaml \
+  --metrics-out=/tmp/cool_metrics.json \
+  --frames-out=/tmp/cool_frames.jsonl \
+  assets/demo/demo
+```
+
+### 批量评分调参
+
+先编译 `auto_aim_test`，再用点分 YAML 路径指定候选值：
+
+```bash
+python3 tools/tune_auto_aim.py \
+  --binary ./build/auto_aim_test \
+  --dataset assets/demo/demo \
+  --base-config configs/demo.yaml \
+  --output tuning_results \
+  --param yaw_optimizer.slope_weight=1.0,2.0,3.0 \
+  --param ekf.angular_acceleration=200,400,800
+```
+
+工具对参数做笛卡尔组合，逐组生成配置并回放，输出 `results.json`、`results.csv`、每组配置、指标和日志；分数越低越好。没有有效装甲板测量的录像标记为 `no_measurements`，不参与排序。默认最多运行 128 组，可用 `--end-index=300` 先做短回放筛选。当前分数综合检出率、跟踪率、yaw 帧间变化、重投影误差、NIS 拒绝率和耗时。
+
+没有真值标注的实拍录像只能用于调节稳定性、连续性和滤波一致性，不能证明 yaw 或命中点更准确。评价真实 yaw RMSE 需要带姿态真值的合成数据或人工标注数据；正式采用参数前还必须做静止、平移、旋转和切板场景的实车复验。
+
 ## USART 协议
 
 已对照你提供的电控工程 `Application/ins_task.c` 核对帧格式。数值按当前支持的 x86_64/aarch64 平台的小端编码。旧电控接口问题和修正建议已归档到 [FIRMWARE_INTERFACE.md](../docs/legacy/FIRMWARE_INTERFACE.md)。

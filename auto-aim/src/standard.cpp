@@ -1,4 +1,7 @@
+#include <yaml-cpp/yaml.h>
+
 #include <chrono>
+#include <memory>
 #include <opencv2/opencv.hpp>
 
 #include "io/camera.hpp"
@@ -11,6 +14,7 @@
 #include "tools/exiter.hpp"
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
+#include "tools/recorder.hpp"
 
 using namespace std::chrono_literals;
 
@@ -35,6 +39,15 @@ int main(int argc, char * argv[])
   auto_aim::Tracker tracker(config_path, solver);
   auto_aim::Aimer aimer(config_path);
   auto_aim::Shooter shooter(config_path);
+  std::unique_ptr<tools::Recorder> recorder;
+  const auto yaml = YAML::LoadFile(config_path);
+  const auto record_config = yaml["record"];
+  if (record_config && record_config["enabled"] && record_config["enabled"].as<bool>()) {
+    const double fps = record_config["fps"] ? record_config["fps"].as<double>() : 60.0;
+    const std::string directory =
+      record_config["directory"] ? record_config["directory"].as<std::string>() : "records";
+    recorder = std::make_unique<tools::Recorder>(fps, directory, config_path);
+  }
 
   while (!exiter.exit()) {
     cv::Mat img;
@@ -47,6 +60,7 @@ int main(int argc, char * argv[])
 
     try {
       const auto q = cboard.imu_at(timestamp - 1ms);
+      if (recorder) recorder->record(img, q, timestamp, cboard.bullet_speed);
       solver.set_R_gimbal2world(q);
       auto armors = detector.detect(img);
       auto targets = tracker.track(armors, timestamp);

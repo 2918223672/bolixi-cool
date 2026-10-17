@@ -32,10 +32,31 @@ max_side_ratio: 1.5
 max_rectangular_error: 25 # degree
 min_confidence: 0.8
 
+#####-----yaw重投影优化-----#####
+yaw_optimizer:
+  enabled: true
+  use_sjtu_cost: true
+  iterations: 12
+  normal_search_half_angle: 45 # degree
+  outpost_search_half_angle: 75 # degree
+  slope_weight: 2.0
+
 #####-----tracker参数-----#####
 min_detect_count: 5
 max_temp_lost_count: 15
 outpost_max_temp_lost_count: 75
+
+ekf:
+  acceleration: 100.0
+  angular_acceleration: 400.0
+  outpost_acceleration: 10.0
+  outpost_angular_acceleration: 0.1
+  center_yaw_noise: 0.004
+  center_pitch_noise: 0.004
+  distance_noise_base: 1.0
+  distance_angle_scale: 1.0
+  armor_yaw_noise_base: 0.09
+  armor_yaw_distance_scale: 0.005
 
 #####-----aimer参数-----#####
 yaw_offset: -1 # degree -2.5

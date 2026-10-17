@@ -34,6 +34,7 @@ private:
   int normal_temp_lost_count_;
   std::string state_;
   Target target_;
+  Target::NoiseParams noise_params_;
   std::chrono::steady_clock::time_point last_timestamp_;
 
   void state_machine(bool found);

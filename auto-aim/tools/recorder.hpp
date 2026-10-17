@@ -2,9 +2,11 @@
 #define TOOLS__RECORDER_HPP
 
 #include <Eigen/Geometry>
+#include <atomic>
 #include <chrono>
 #include <fstream>
 #include <opencv2/opencv.hpp>
+#include <string>
 #include <thread>
 
 #include "tools/thread_safe_queue.hpp"
@@ -13,11 +15,11 @@ namespace tools
 class Recorder
 {
 public:
-  Recorder(double fps = 30);
+  Recorder(double fps = 30, std::string directory = "records", std::string config_path = "");
   ~Recorder();
   void record(
     const cv::Mat & img, const Eigen::Quaterniond & q,
-    const std::chrono::steady_clock::time_point & timestamp);
+    const std::chrono::steady_clock::time_point & timestamp, double bullet_speed);
 
 private:
   struct FrameData
@@ -25,6 +27,7 @@ private:
     cv::Mat img;
     Eigen::Quaterniond q;
     std::chrono::steady_clock::time_point timestamp;
+    double bullet_speed;
   };
   bool init_;
   std::atomic<bool> stop_thread_;
@@ -35,7 +38,7 @@ private:
   cv::VideoWriter video_writer_;
   std::chrono::steady_clock::time_point start_time_;
   std::chrono::steady_clock::time_point last_time_;
-  tools::ThreadSafeQueue<FrameData> queue_;
+  tools::ThreadSafeQueue<FrameData, true> queue_;
   std::thread saving_thread_;  // 负责保存帧数据的线程
   void init(const cv::Mat & img);
   void save_to_file();
