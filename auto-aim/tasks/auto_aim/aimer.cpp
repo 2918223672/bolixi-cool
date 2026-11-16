@@ -59,9 +59,8 @@ io::Command Aimer::aim(
   }
 
   else {
-    auto dt = 0.005 + delay_time;  //detector-aimer耗时0.005+发弹延时0.1
-    // tools::logger()->info("dt is {:.4f} second", dt);
-    future += std::chrono::microseconds(int(dt * 1e6));
+    // The caller supplies a timestamp already aligned to its latest state snapshot.
+    future += std::chrono::microseconds(int(delay_time * 1e6));
     target.predict(future);
   }
 
@@ -83,13 +82,16 @@ io::Command Aimer::aim(
     const double front_y = state[2] - state[8] * std::sin(center_yaw);
     const auto armors = target.armor_xyza_list();
     double smallest_angle = 1e10;
+    int closest_id = 0;
     Eigen::Vector4d closest = armors.front();
-    for (const auto & armor : armors) {
+    for (size_t i = 0; i < armors.size(); ++i) {
+      const auto & armor = armors[i];
       if (!use_both_heights && std::abs(armor[2] - state[4]) > 0.01) continue;
       const double angle = std::abs(tools::limit_rad(armor[3] - center_yaw));
       if (angle < smallest_angle) {
         smallest_angle = angle;
         closest = armor;
+        closest_id = static_cast<int>(i);
       }
     }
     const double lateral_error =
@@ -97,21 +99,20 @@ io::Command Aimer::aim(
     const double fire_half_width =
       observed_translation_ ? spin_moving_fire_half_width_ : spin_fire_half_width_;
     debug_aim_point = {smallest_angle < 0.5 && lateral_error <= fire_half_width,
-                       closest};
+                       closest, closest_id};
     tools::Trajectory trajectory(
       bullet_speed, std::hypot(front_x, front_y), closest[2], drag_k_);
     if (trajectory.unsolvable) return {false, false, 0, 0};
+    const double center_distance_sq = state[0] * state[0] + state[2] * state[2];
+    const double yaw_rate = center_distance_sq > 1e-6 ?
+      (state[0] * state[3] - state[2] * state[1]) / center_distance_sq : 0.0;
     fire_command = {
-      true, false, center_yaw + yaw_offset_, -(trajectory.pitch + pitch_offset_)};
+      true, false, center_yaw + yaw_offset_, -(trajectory.pitch + pitch_offset_), yaw_rate};
     return fire_command;
   }
 
   auto aim_point0 = choose_aim_point(target);
   debug_aim_point = aim_point0;
-  if (!aim_point0.valid) {
-    // tools::logger()->debug("Invalid aim_point0.");
-    return {false, false, 0, 0};
-  }
 
   Eigen::Vector3d xyz0 = aim_point0.xyza.head(3);
   auto d0 = std::sqrt(xyz0[0] * xyz0[0] + xyz0[1] * xyz0[1]);
@@ -126,19 +127,18 @@ io::Command Aimer::aim(
   // 迭代求解飞行时间 (最多10次，收敛条件：相邻两次fly_time差 <0.001)
   double prev_fly_time = trajectory0.fly_time;
   tools::Trajectory current_traj = trajectory0;
+  Target impact_target = target;
 
   for (int iter = 0; iter < 10; ++iter) {
     // 预测目标在 future + prev_fly_time 时刻的位置
     auto predict_time = future + std::chrono::microseconds(static_cast<int>(prev_fly_time * 1e6));
     Target iteration_target = target;
     iteration_target.predict(predict_time);
+    impact_target = iteration_target;
 
     // 计算瞄准点
     auto aim_point = choose_aim_point(iteration_target);
     debug_aim_point = aim_point;
-    if (!aim_point.valid) {
-      return {false, false, 0, 0};
-    }
 
     // 计算新弹道
     Eigen::Vector3d xyz = aim_point.xyza.head(3);
@@ -168,7 +168,11 @@ io::Command Aimer::aim(
   Eigen::Vector3d final_xyz = debug_aim_point.xyza.head(3);
   double yaw = std::atan2(final_xyz.y(), final_xyz.x()) + yaw_offset_;
   double pitch = -(current_traj.pitch + pitch_offset_);  //世界坐标系下pitch向上为负
-  fire_command = {true, false, yaw, pitch};
+  const auto velocity = impact_target.armor_velocity(debug_aim_point.armor_id);
+  const double distance_sq = final_xyz.x() * final_xyz.x() + final_xyz.y() * final_xyz.y();
+  const double yaw_rate = distance_sq > 1e-6 ?
+    (final_xyz.x() * velocity.y() - final_xyz.y() * velocity.x()) / distance_sq : 0.0;
+  fire_command = {true, false, yaw, pitch, yaw_rate};
   return fire_command;
 }
 
@@ -178,7 +182,7 @@ AimPoint Aimer::choose_aim_point(const Target & target)
   std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
   auto armor_num = armor_xyza_list.size();
   // 如果装甲板未发生过跳变，则只有当前装甲板的位置已知
-  if (!target.jumped) return {true, armor_xyza_list[0]};
+  if (!target.jumped) return {true, armor_xyza_list[0], 0};
 
   // 整车旋转中心的球坐标yaw
   auto center_yaw = std::atan2(ekf_x[2], ekf_x[0]);
@@ -190,18 +194,21 @@ AimPoint Aimer::choose_aim_point(const Target & target)
     delta_angle_list.emplace_back(delta_angle);
   }
 
-  // 不考虑小陀螺
-  if (std::abs(target.ekf_x()[8]) <= 2) {
+  const double spin_threshold =
+    spin_speed_threshold_ > 0.0 ? spin_speed_threshold_ : decision_speed_;
+  if (std::abs(ekf_x[7]) < spin_threshold) {
     // 选择在可射击范围内的装甲板
     std::vector<int> id_list;
     for (int i = 0; i < armor_num; i++) {
       if (std::abs(delta_angle_list[i]) > 60 / 57.3) continue;
       id_list.push_back(i);
     }
-    // 绝无可能
     if (id_list.empty()) {
-      tools::logger()->warn("Empty id list!");
-      return {false, armor_xyza_list[0]};
+      const auto nearest = std::min_element(
+        delta_angle_list.begin(), delta_angle_list.end(),
+        [](double a, double b) { return std::abs(a) < std::abs(b); });
+      const auto id = std::distance(delta_angle_list.begin(), nearest);
+      return {false, armor_xyza_list[id], static_cast<int>(id)};
     }
 
     // 锁定模式：防止在两个都呈45度的装甲板之间来回切换
@@ -212,12 +219,12 @@ AimPoint Aimer::choose_aim_point(const Target & target)
       if (lock_id_ != id0 && lock_id_ != id1)
         lock_id_ = (std::abs(delta_angle_list[id0]) < std::abs(delta_angle_list[id1])) ? id0 : id1;
 
-      return {true, armor_xyza_list[lock_id_]};
+      return {true, armor_xyza_list[lock_id_], static_cast<int>(lock_id_)};
     }
 
     // 只有一个装甲板在可射击范围内时，退出锁定模式
     lock_id_ = -1;
-    return {true, armor_xyza_list[id_list[0]]};
+    return {true, armor_xyza_list[id_list[0]], id_list[0]};
   }
 
   const double coming_angle = comming_angle_;
@@ -226,11 +233,17 @@ AimPoint Aimer::choose_aim_point(const Target & target)
   // 在小陀螺时，一侧的装甲板不断出现，另一侧的装甲板不断消失，显然前者被打中的概率更高
   for (int i = 0; i < armor_num; i++) {
     if (std::abs(delta_angle_list[i]) > coming_angle) continue;
-    if (ekf_x[7] > 0 && delta_angle_list[i] < leaving_angle) return {true, armor_xyza_list[i]};
-    if (ekf_x[7] < 0 && delta_angle_list[i] > -leaving_angle) return {true, armor_xyza_list[i]};
+    if (ekf_x[7] > 0 && delta_angle_list[i] < leaving_angle)
+      return {true, armor_xyza_list[i], i};
+    if (ekf_x[7] < 0 && delta_angle_list[i] > -leaving_angle)
+      return {true, armor_xyza_list[i], i};
   }
 
-  return {false, armor_xyza_list[0]};
+  const auto nearest = std::min_element(
+    delta_angle_list.begin(), delta_angle_list.end(),
+    [](double a, double b) { return std::abs(a) < std::abs(b); });
+  const auto id = std::distance(delta_angle_list.begin(), nearest);
+  return {false, armor_xyza_list[id], static_cast<int>(id)};
 }
 
 }  // namespace auto_aim

@@ -32,8 +32,11 @@ public:
   void predict(std::chrono::steady_clock::time_point t);
   void predict(double dt);
   bool update(const Armor & armor);
-  void set_spatial_association(double max_error);
+  void set_spatial_association(
+    double max_error, double relative_error = 0.0, double max_yaw_error = 0.0);
   void set_max_angular_speed(double max_speed);
+  void set_angular_acceleration_variance(double variance);
+  void set_armor_yaw_noise(double base_variance, double distance_scale);
   void set_imm_parameters(double mode_time_constant, double cv_acceleration_variance,
                           double ca_jerk_variance);
   void fix_normal_geometry(double radius, double radius_difference, double height_difference,
@@ -42,6 +45,7 @@ public:
   Eigen::VectorXd ekf_x() const;
   const tools::ExtendedKalmanFilter & ekf() const;
   std::vector<Eigen::Vector4d> armor_xyza_list() const;
+  Eigen::Vector2d armor_velocity(int id) const;
 
   bool diverged() const;
 
@@ -63,7 +67,11 @@ private:
   double fixed_height_difference_ = 0;
   double fixed_center_z_ = 0;
   double max_spatial_error_ = 0;
+  double relative_spatial_error_ = 0;
+  double max_association_yaw_error_ = 0;
   double max_angular_speed_ = 0;
+  double armor_yaw_noise_base_ = 0.09;
+  double armor_yaw_distance_scale_ = -1.0;
 
   tools::ExtendedKalmanFilter ekf_;
   tools::ExtendedKalmanFilter cv_;
@@ -72,6 +80,7 @@ private:
   double imm_mode_time_constant_ = 0.35;
   double cv_acceleration_variance_ = 20.0;
   double ca_jerk_variance_ = 300.0;
+  double angular_acceleration_variance_ = 400.0;
   std::chrono::steady_clock::time_point t_;
 
   void update_ypda(const Armor & armor, int id);  // yaw pitch distance angle

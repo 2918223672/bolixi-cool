@@ -33,10 +33,15 @@ private:
   int temp_lost_count_;
   bool fixed_normal_geometry_ = false;
   double max_spatial_error_ = 0;
+  double relative_spatial_error_ = 0;
+  double max_association_yaw_error_ = 0;
   double max_angular_speed_ = 0;
   double imm_mode_time_constant_ = 0.35;
   double cv_acceleration_variance_ = 20.0;
   double ca_jerk_variance_ = 300.0;
+  double angular_acceleration_variance_ = 400.0;
+  double armor_yaw_noise_base_ = 0.09;
+  double armor_yaw_distance_scale_ = -1.0;
   double max_armor_height_error_ = 0;
   double max_coast_image_error_px_ = 0;
   int max_spin_coast_frames_ = 0;

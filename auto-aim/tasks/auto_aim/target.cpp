@@ -132,7 +132,6 @@ void Target::predict_model(tools::ExtendedKalmanFilter & filter, double dt, bool
   F(0, 1) = F(2, 3) = F(4, 5) = F(6, 7) = dt;
   Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(13, 13);
   const double dt2 = dt * dt, dt3 = dt2 * dt, dt4 = dt3 * dt, dt5 = dt4 * dt;
-  constexpr double angular_acceleration_variance = 400.0;
   if (ca_model) {
     F(0, 11) = F(2, 12) = 0.5 * dt2;
     F(1, 11) = F(3, 12) = dt;
@@ -155,9 +154,9 @@ void Target::predict_model(tools::ExtendedKalmanFilter & filter, double dt, bool
     }
     Q(11, 11) = Q(12, 12) = 1e-9;
   }
-  Q(6, 6) = angular_acceleration_variance * dt4 / 4.0;
-  Q(6, 7) = Q(7, 6) = angular_acceleration_variance * dt3 / 2.0;
-  Q(7, 7) = angular_acceleration_variance * dt2;
+  Q(6, 6) = angular_acceleration_variance_ * dt4 / 4.0;
+  Q(6, 7) = Q(7, 6) = angular_acceleration_variance_ * dt3 / 2.0;
+  Q(7, 7) = angular_acceleration_variance_ * dt2;
   filter.predict(F, Q, [&](const Eigen::VectorXd & state) {
     Eigen::VectorXd predicted = F * state;
     predicted[6] = tools::limit_rad(predicted[6]);
@@ -228,14 +227,37 @@ void Target::apply_fixed_geometry()
   }
 }
 
-void Target::set_spatial_association(double max_error)
+void Target::set_spatial_association(
+  double max_error, double relative_error, double max_yaw_error)
 {
+  if (!std::isfinite(max_error) || max_error < 0.0 ||
+      !std::isfinite(relative_error) || relative_error < 0.0 ||
+      !std::isfinite(max_yaw_error) || max_yaw_error < 0.0)
+    throw std::invalid_argument("association limits must be finite and non-negative");
   max_spatial_error_ = max_error;
+  relative_spatial_error_ = relative_error;
+  max_association_yaw_error_ = max_yaw_error;
 }
 
 void Target::set_max_angular_speed(double max_speed)
 {
   max_angular_speed_ = max_speed;
+}
+
+void Target::set_angular_acceleration_variance(double variance)
+{
+  if (!std::isfinite(variance) || variance <= 0.0)
+    throw std::invalid_argument("angular acceleration variance must be finite and positive");
+  angular_acceleration_variance_ = variance;
+}
+
+void Target::set_armor_yaw_noise(double base_variance, double distance_scale)
+{
+  if (!std::isfinite(base_variance) || base_variance <= 0.0 ||
+      !std::isfinite(distance_scale) || distance_scale < 0.0)
+    throw std::invalid_argument("armor yaw noise must be finite and non-negative");
+  armor_yaw_noise_base_ = base_variance;
+  armor_yaw_distance_scale_ = distance_scale;
 }
 
 void Target::set_imm_parameters(
@@ -253,7 +275,7 @@ void Target::set_imm_parameters(
 bool Target::update(const Armor & armor)
 {
   // 装甲板匹配
-  int id;
+  int id = -1;
   auto min_angle_error = 1e10;
   const std::vector<Eigen::Vector4d> & xyza_list = armor_xyza_list();
 
@@ -271,13 +293,21 @@ bool Target::update(const Armor & armor)
     });
 
   // 取最近的候选装甲板参与关联。
+  const double spatial_gate =
+    max_spatial_error_ + relative_spatial_error_ * armor.ypd_in_world[2];
   for (int i = 0; i < std::min(3, armor_num_); i++) {
     const auto & xyza = xyza_i_list[i].first;
     Eigen::Vector3d ypd = tools::xyz2ypd(xyza.head(3));
     const auto angle_error = std::abs(tools::limit_rad(armor.ypr_in_world[0] - xyza[3])) +
                              std::abs(tools::limit_rad(armor.ypd_in_world[0] - ypd[0]));
     const auto position_error = (armor.xyz_in_world - xyza.head(3)).norm();
-    const auto error = max_spatial_error_ > 0 ? position_error : angle_error;
+    const auto yaw_error = std::abs(tools::limit_rad(armor.ypr_in_world[0] - xyza[3]));
+    if (max_spatial_error_ > 0 && position_error > spatial_gate) continue;
+    if (max_association_yaw_error_ > 0 && yaw_error > max_association_yaw_error_) continue;
+    const auto error = max_spatial_error_ > 0 ?
+      position_error / spatial_gate +
+        (max_association_yaw_error_ > 0 ? yaw_error / max_association_yaw_error_ : 0.0) :
+      angle_error;
 
     if (error < min_angle_error) {
       id = xyza_i_list[i].second;
@@ -285,7 +315,7 @@ bool Target::update(const Armor & armor)
     }
   }
 
-  if (max_spatial_error_ > 0 && min_angle_error > max_spatial_error_) return false;
+  if (id < 0) return false;
 
   if (id != 0) jumped = true;
 
@@ -326,9 +356,13 @@ void Target::update_model(tools::ExtendedKalmanFilter & filter, const Armor & ar
   const Eigen::MatrixXd H = h_jacobian(filter.x, id);
   const auto center_yaw = std::atan2(armor.xyz_in_world[1], armor.xyz_in_world[0]);
   const auto delta_angle = tools::limit_rad(armor.ypr_in_world[0] - center_yaw);
+  const double yaw_variance = armor_yaw_distance_scale_ >= 0.0 ?
+    armor_yaw_noise_base_ + armor_yaw_distance_scale_ *
+      armor.ypd_in_world[2] * armor.ypd_in_world[2] :
+    std::log(std::abs(armor.ypd_in_world[2]) + 1) / 200 + 9e-2;
   const Eigen::VectorXd R_diagonal{
     {4e-3, 4e-3, std::log(std::abs(delta_angle) + 1) + 1,
-     std::log(std::abs(armor.ypd_in_world[2]) + 1) / 200 + 9e-2}};
+     yaw_variance}};
   const Eigen::MatrixXd R = R_diagonal.asDiagonal();
   const Eigen::VectorXd z{{armor.ypd_in_world[0], armor.ypd_in_world[1],
                             armor.ypd_in_world[2], armor.ypr_in_world[0]}};
@@ -376,6 +410,17 @@ std::vector<Eigen::Vector4d> Target::armor_xyza_list() const
     _armor_xyza_list.push_back({xyz[0], xyz[1], xyz[2], angle});
   }
   return _armor_xyza_list;
+}
+
+Eigen::Vector2d Target::armor_velocity(int id) const
+{
+  const auto & x = ekf_.x;
+  const double angle = x[6] + id * 2 * CV_PI / armor_num_;
+  const bool use_other_radius = armor_num_ == 4 && (id == 1 || id == 3);
+  const double radius = x[8] + (use_other_radius ? x[9] : 0.0);
+  // r_armor = -radius*(cos(angle), sin(angle)); omega x r_armor sets the signs.
+  return {x[1] + radius * x[7] * std::sin(angle),
+          x[3] - radius * x[7] * std::cos(angle)};
 }
 
 bool Target::diverged() const

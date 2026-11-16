@@ -15,6 +15,7 @@ struct AimPoint
 {
   bool valid;
   Eigen::Vector4d xyza;
+  int armor_id = -1;
 };
 
 // Diagnostics for the iterative armor-center prediction; never used by control logic.

@@ -30,6 +30,9 @@ add_subdirectory(tasks/auto_aim)
 add_executable(standard src/standard.cpp)
 target_link_libraries(standard auto_aim tools io)
 
+add_executable(cboard_comm_test src/cboard_comm_test.cpp)
+target_link_libraries(cboard_comm_test io tools)
+
 add_executable(auto_aim_sim src/auto_aim_sim.cpp)
 target_link_libraries(auto_aim_sim auto_aim tools sim_io)
 
@@ -49,5 +52,7 @@ if(BUILD_DEBUG_TOOLS)
   target_link_libraries(yolov5_postprocess_test auto_aim tools io)
   add_executable(yolov5_image_probe tests/yolov5_image_probe.cpp)
   target_link_libraries(yolov5_image_probe auto_aim tools io)
+  add_executable(target_kinematics_test tests/target_kinematics_test.cpp)
+  target_link_libraries(target_kinematics_test auto_aim tools io)
 endif()
 

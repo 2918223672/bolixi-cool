@@ -27,9 +27,16 @@ Tracker::Tracker(const std::string & config_path, Solver & solver)
     imm_mode_time_constant_ = ekf["imm_mode_time_constant"].as<double>(0.35);
     cv_acceleration_variance_ = ekf["imm_cv_acceleration_variance"].as<double>(20.0);
     ca_jerk_variance_ = ekf["imm_ca_jerk_variance"].as<double>(300.0);
+    angular_acceleration_variance_ = ekf["angular_acceleration"].as<double>(400.0);
+    armor_yaw_noise_base_ = ekf["armor_yaw_noise_base"].as<double>(0.09);
+    if (ekf["armor_yaw_noise_base"] || ekf["armor_yaw_distance_scale"])
+      armor_yaw_distance_scale_ = ekf["armor_yaw_distance_scale"].as<double>(0.0);
   }
-  if (ekf && ekf["use_spatial_association"].as<bool>(false))
+  if (ekf && ekf["use_spatial_association"].as<bool>(false)) {
     max_spatial_error_ = ekf["max_spatial_error"].as<double>(0.25);
+    relative_spatial_error_ = ekf["relative_spatial_error"].as<double>(0.0);
+    max_association_yaw_error_ = ekf["max_association_yaw_error"].as<double>(0.0);
+  }
   const auto sim = yaml["sim"];
   if (sim) {
     const auto forced_name = sim["force_armor_name"].as<std::string>("");
@@ -190,8 +197,12 @@ bool Tracker::set_target(std::list<Armor> & armors, std::chrono::steady_clock::t
           std::abs(armor.xyz_in_world.z() - normal_center_z_));
   }
 
-  target_.set_spatial_association(max_spatial_error_);
+  target_.set_spatial_association(
+    max_spatial_error_, relative_spatial_error_, max_association_yaw_error_);
   target_.set_max_angular_speed(max_angular_speed_);
+  target_.set_angular_acceleration_variance(angular_acceleration_variance_);
+  if (armor_yaw_distance_scale_ >= 0.0)
+    target_.set_armor_yaw_noise(armor_yaw_noise_base_, armor_yaw_distance_scale_);
   target_.set_imm_parameters(
     imm_mode_time_constant_, cv_acceleration_variance_, ca_jerk_variance_);
   invalid_coast_count_ = 0;

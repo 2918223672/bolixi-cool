@@ -254,7 +254,8 @@ void SimClient::send(Command command)
 {
   refresh_state();
   if (state_.empty()) return;
-  if (!std::isfinite(command.yaw) || !std::isfinite(command.pitch))
+  if (!std::isfinite(command.yaw) || !std::isfinite(command.pitch) ||
+      !std::isfinite(command.yaw_vel) || !std::isfinite(command.pitch_vel))
     command = {false, false, 0, 0};
 
   const auto session = state_.at("session_id").get<std::string>();
@@ -280,8 +281,8 @@ void SimClient::send(Command command)
      {"fire", command.shoot},
      {"yaw", command.yaw},
      {"pitch", command.pitch},
-     {"yaw_vel", 0.0},
-     {"pitch_vel", 0.0},
+     {"yaw_vel", command.yaw_vel},
+     {"pitch_vel", command.pitch_vel},
      {"yaw_acc", 0.0},
      {"pitch_acc", 0.0}});
 }

@@ -9,6 +9,8 @@ struct Command
   bool shoot;
   double yaw;
   double pitch;
+  double yaw_vel = 0.0;
+  double pitch_vel = 0.0;
 };
 
 }  // namespace io

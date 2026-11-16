@@ -122,7 +122,16 @@ yolo_refinement:
 
 累加校验可过滤部分损坏帧，但没有 CRC、序号或电控时间戳，仍无法检测所有错误或准确还原采样时刻。后续增加这些字段必须同步修改电控固件。发送侧检查完整写入，但写入成功只说明字节已交给系统，不代表电控已经接收或执行。当前电控解析函数未接入云台和射击任务；接入时必须设置启用条件和指令超时保护。
 
-无需硬件的 USART 测试：
+只测试实车 C 板通信时，在 `auto-aim/` 目录运行：
+
+```bash
+./build_clean/cboard_comm_test configs/standard3.yaml
+./build_clean/cboard_comm_test configs/standard3.yaml --control --yaw=0.1 --pitch=0.0
+```
+
+第一条命令持续打印接收的 IMU 四元数和配置弹速，并发送取消控制帧；第二条命令在收到有效姿态时发送指定弧度角。两种模式都不发送开火请求，按 Ctrl+C 退出并发送取消控制帧。新电控协议改用 `configs/sentry_step1.yaml`。发送成功只表示串口写入，不表示电控已执行。
+
+无需硬件的 USART 协议回归测试：
 
 ```bash
 python3 tests/cboard_serial_test.py ./build_clean/cboard_serial_probe

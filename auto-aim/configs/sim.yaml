@@ -52,7 +52,7 @@ ekf:
   imm_ca_jerk_variance: 300.0
   acceleration: 100.0
   vertical_acceleration: 0.0
-  angular_acceleration: 400.0
+  angular_acceleration: 400.0 # rad^2/s^4, angular process-noise variance
   center_yaw_noise: 0.004
   center_pitch_noise: 0.004
   distance_noise_base: 1.0
@@ -60,7 +60,9 @@ ekf:
   armor_yaw_noise_base: 0.09
   armor_yaw_distance_scale: 0.005
   use_spatial_association: true
-  max_spatial_error: 0.25
+  max_spatial_error: 0.25 # m, fixed part of position association gate
+  relative_spatial_error: 0.2 # range fraction for PnP depth uncertainty
+  max_association_yaw_error: 1.2 # rad, prevents cross-plate association
   reject_nis_outliers: true
 
 # rm_aim_sim 默认 550 mm 旋转外廓对应的装甲中心半径约 0.24807 m；
@@ -79,7 +81,7 @@ comming_angle: 55
 leaving_angle: 20
 small_gyro_min_speed: 10.0
 decision_speed: 2
-high_speed_delay_time: 0.075
+high_speed_delay_time: 0.015
 low_speed_delay_time: 0.015
 spin_center_aim: true
 spin_use_both_heights: true
