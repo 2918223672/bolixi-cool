@@ -1,0 +1,60 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build task",
+            "type": "process",
+            "command": "D:/msys64/mingw64/bin/mingw32-make.exe",
+            "args": [
+                "-j4"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "download jlink",
+            "type": "process",
+            "command": "D:/msys64/mingw64/bin/mingw32-make.exe",
+            "args": [
+                "download_jlink"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "build task",
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        },
+        {
+            "label": "download dap",
+            "type": "process",
+            "command": "D:/msys64/mingw64/bin/mingw32-make.exe",
+            "args": [
+                "download_dap"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "build task",
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        },
+        {
+            "label": "log",
+            "type": "process",
+            "command": "JLinkRTTClient",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

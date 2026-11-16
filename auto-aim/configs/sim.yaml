@@ -1,0 +1,109 @@
+enemy_color: "blue"
+
+yolo_name: yolov5
+classify_model: assets/tiny_resnet.onnx
+yolo11_model_path: assets/yolo11.xml
+yolov8_model_path: assets/yolov8.xml
+yolov5_model_path: assets/yolov5.xml
+device: CPU
+min_confidence: 0.6
+use_traditional: true
+
+# Full-frame search plus bounded local re-detection; no fixed ROI or target ID.
+yolo_refinement:
+  enabled: true
+  max_rois: 2
+  proposal_confidence: 0.35
+  min_number_confidence: 0.3
+  min_number_margin: 0.1
+
+roi:
+  x: 420
+  y: 50
+  width: 600
+  height: 600
+use_roi: false
+
+threshold: 100
+max_angle_error: 45
+min_lightbar_ratio: 1.5
+max_lightbar_ratio: 20
+min_lightbar_length: 8
+min_armor_ratio: 1
+max_armor_ratio: 5
+max_side_ratio: 1.5
+max_rectangular_error: 25
+
+yaw_optimizer:
+  enabled: true
+  use_sjtu_cost: true
+  iterations: 12
+  normal_search_half_angle: 45
+  slope_weight: 2.0
+
+min_detect_count: 3
+max_temp_lost_count: 15
+max_frame_gap: 0.25
+max_angular_speed: 5.0
+
+ekf:
+  imm_mode_time_constant: 0.35
+  imm_cv_acceleration_variance: 20.0
+  imm_ca_jerk_variance: 300.0
+  acceleration: 100.0
+  vertical_acceleration: 0.0
+  angular_acceleration: 400.0
+  center_yaw_noise: 0.004
+  center_pitch_noise: 0.004
+  distance_noise_base: 1.0
+  distance_angle_scale: 1.0
+  armor_yaw_noise_base: 0.09
+  armor_yaw_distance_scale: 0.005
+  use_spatial_association: true
+  max_spatial_error: 0.25
+  reject_nis_outliers: true
+
+# rm_aim_sim 默认 550 mm 旋转外廓对应的装甲中心半径约 0.24807 m；
+# 四块装甲半径相同，奇数组比偶数组低 0.1 m。仿真几何已知，因此固定这些状态。
+normal_target_geometry:
+  radius: 0.2480696
+  radius_difference: 0.0
+  height_difference: -0.1
+  reference_center_z: -0.3896296
+  fixed: true
+  max_armor_height_error: 0.025
+
+yaw_offset: 0.0
+pitch_offset: 0.0
+comming_angle: 55
+leaving_angle: 20
+small_gyro_min_speed: 10.0
+decision_speed: 2
+high_speed_delay_time: 0.075
+low_speed_delay_time: 0.015
+spin_center_aim: true
+spin_use_both_heights: true
+spin_speed_threshold: 2.0
+spin_fire_half_width: 0.075
+spin_moving_fire_half_width: 0.10
+
+first_tolerance: 2
+second_tolerance: 1.2
+spin_tolerance: 1.0
+spin_moving_tolerance: 1.2
+judge_distance: 2
+auto_fire: true
+
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+camera_matrix: [1303.6753236814714, 0, 720, 0, 1303.6753236814714, 540, 0, 0, 1]
+distort_coeffs: [0, 0, 0, 0, 0]
+R_camera2gimbal: [0, 0, 1, -1, 0, 0, 0, -1, 0]
+t_camera2gimbal: [0.08, 0, 0.04]
+
+sim:
+  channel: default
+  width: 1440
+  height: 1080
+  force_armor_name: three
+  max_coast_image_error_px: 40
+  max_spin_coast_frames: 3

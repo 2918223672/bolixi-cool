@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simulator Screen Stream</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font: 14px/1.4 system-ui, sans-serif;
+      background: #101413;
+      color: #e7efeb;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+    header, footer { display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
+    header { border-bottom: 1px solid #34413b; }
+    footer { border-top: 1px solid #34413b; flex-wrap: wrap; }
+    h1 { margin: 0 auto 0 0; font-size: 16px; font-weight: 600; }
+    button, a.button {
+      min-height: 36px;
+      border: 1px solid #53665d;
+      border-radius: 4px;
+      padding: 7px 12px;
+      background: #202c27;
+      color: inherit;
+      font: inherit;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    button:hover, a.button:hover { background: #2b3b33; }
+    button:disabled, a[aria-disabled="true"] { opacity: .45; cursor: default; }
+    #status { color: #9fbbb0; min-width: 160px; }
+    #details { color: #a8b5ae; margin-left: auto; }
+    main { min-height: 0; display: grid; place-items: center; padding: 14px; }
+    video { display: block; width: 100%; height: 100%; max-height: calc(100vh - 142px); object-fit: contain; background: #050807; }
+    @media (max-width: 640px) {
+      header, footer { padding: 10px; gap: 8px; }
+      footer { align-items: stretch; }
+      button, a.button { flex: 1 1 auto; }
+      #status, #details { width: 100%; margin: 0; }
+      main { padding: 6px; }
+      video { max-height: calc(100vh - 200px); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Simulator Screen Stream</h1>
+    <span id="status" role="status">No window selected</span>
+    <span id="details"></span>
+  </header>
+  <main>
+    <video id="preview" autoplay muted playsinline></video>
+  </main>
+  <footer>
+    <button id="share">Select simulator window</button>
+    <button id="record" disabled>Start recording</button>
+    <button id="stop-recording" disabled>Stop recording</button>
+    <a id="save" class="button" aria-disabled="true">Save WebM</a>
+    <button id="stop-share" disabled>Stop sharing</button>
+  </footer>
+  <script>
+    const preview = document.querySelector("#preview");
+    const status = document.querySelector("#status");
+    const details = document.querySelector("#details");
+    const shareButton = document.querySelector("#share");
+    const recordButton = document.querySelector("#record");
+    const stopRecordingButton = document.querySelector("#stop-recording");
+    const stopShareButton = document.querySelector("#stop-share");
+    const saveButton = document.querySelector("#save");
+    let stream = null;
+    let recorder = null;
+    let chunks = [];
+    let recordingUrl = null;
+
+    function setStatus(text) { status.textContent = text; }
+
+    function resetPreview() {
+      preview.srcObject = null;
+      details.textContent = "";
+      recordButton.disabled = true;
+      stopRecordingButton.disabled = true;
+      stopShareButton.disabled = true;
+      shareButton.disabled = false;
+      setStatus("No window selected");
+    }
+
+    function finishRecording() {
+      if (!recorder || recorder.state === "inactive") return;
+      recorder.stop();
+    }
+
+    function saveRecording() {
+      if (!chunks.length) return;
+      const blob = new Blob(chunks, { type: recorder?.mimeType || "video/webm" });
+      if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+      recordingUrl = URL.createObjectURL(blob);
+      const stamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
+      saveButton.href = recordingUrl;
+      saveButton.download = `simulator-${stamp}.webm`;
+      saveButton.setAttribute("aria-disabled", "false");
+    }
+
+    shareButton.addEventListener("click", async () => {
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: { ideal: 15, max: 30 } },
+          audio: false
+        });
+        preview.srcObject = stream;
+        shareButton.disabled = true;
+        stopShareButton.disabled = false;
+        recordButton.disabled = false;
+        const track = stream.getVideoTracks()[0];
+        const settings = track.getSettings();
+        details.textContent = `${settings.width || "?"} x ${settings.height || "?"} · ${settings.frameRate || "?"} fps`;
+        setStatus("Window stream active");
+        track.addEventListener("ended", () => {
+          finishRecording();
+          stream = null;
+          resetPreview();
+        }, { once: true });
+      } catch (error) {
+        setStatus(error.name === "NotAllowedError" ? "Screen sharing was cancelled" : error.message);
+      }
+    });
+
+    recordButton.addEventListener("click", () => {
+      if (!stream || !window.MediaRecorder) return;
+      const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
+        .find(type => MediaRecorder.isTypeSupported(type));
+      chunks = [];
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 4000000 } : undefined);
+      recorder.addEventListener("dataavailable", event => {
+        if (event.data.size) chunks.push(event.data);
+      });
+      recorder.addEventListener("stop", () => {
+        saveRecording();
+        recordButton.disabled = false;
+        stopRecordingButton.disabled = true;
+        setStatus("Recording ready to save");
+      }, { once: true });
+      recorder.start(1000);
+      recordButton.disabled = true;
+      stopRecordingButton.disabled = false;
+      saveButton.setAttribute("aria-disabled", "true");
+      setStatus("Recording");
+    });
+
+    stopRecordingButton.addEventListener("click", finishRecording);
+    stopShareButton.addEventListener("click", () => {
+      finishRecording();
+      stream?.getTracks().forEach(track => track.stop());
+      stream = null;
+      resetPreview();
+    });
+    saveButton.addEventListener("click", event => {
+      if (saveButton.getAttribute("aria-disabled") === "true") event.preventDefault();
+    });
+    window.addEventListener("beforeunload", () => {
+      stream?.getTracks().forEach(track => track.stop());
+      if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+    });
+  </script>
+</body>
+</html>

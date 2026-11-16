@@ -1,0 +1,79 @@
+--- a/scripts/settings.gd
++++ b/scripts/settings.gd
+@@ -17,7 +17,7 @@
+ 			"max_speed": 6.0, "max_acceleration": 50.0, "response_hz": 6.0,
+ 			"pitch_min": -PI / 6.0, "pitch_max": PI / 9.0},
+ 		"weapon": {"speed": 23.0, "rate": 10.0, "delay": 0.015,
+-			"gravity": 9.7833, "lifetime": 3.0, "damage": 20},
++			"gravity": 9.7833, "drag_k": 0.0, "lifetime": 3.0, "damage": 20},
+ 		"camera": {"width": 1440, "height": 1080, "vertical_fov": 45.0,
+ 			"brightness_gain": 0.4,
+ 			"offset": Vector3(0.08, 0, 0.04)},
+@@ -108,6 +108,7 @@
+ 		"gimbal.pitch_max": [0.0, PI / 2.0 - 0.01],
+ 		"weapon.speed": [1.0, 100.0], "weapon.rate": [0.1, 50.0],
+ 		"weapon.delay": [0.0, 1.0], "weapon.gravity": [0.0, 20.0],
++		"weapon.drag_k": [0.0, 0.2],
+ 		"weapon.lifetime": [0.1, 10.0], "camera.width": [160, 3840],
+ 		"camera.height": [120, 2160], "camera.vertical_fov": [10.0, 120.0],
+ 		"camera.brightness_gain": [0.0, 4.0],
+--- a/scripts/simulation.gd
++++ b/scripts/simulation.gd
+@@ -339,6 +339,8 @@
+ 	var origin: Vector3 = settings.gimbal.origin + settings.gimbal.barrel_length * direction
+ 	var bullet = {"id": next_shot_id, "born": at, "origin": origin,
+ 		"velocity": direction * settings.weapon.speed, "damage": settings.weapon.damage}
++	if settings.weapon.drag_k > 0.0:
++		bullet["drag_points"] = _drag_path(bullet.velocity)
+ 	projectiles.append(bullet)
+ 	next_shot_id += 1
+ 	stats.fired += 1
+@@ -347,8 +349,38 @@
+ 	_trim_events()
+ 
+ 
++const DRAG_STEP = 0.002
++
++func _drag_acc(velocity: Vector3) -> Vector3:
++	return Vector3(0, 0, -settings.weapon.gravity) \
++		- settings.weapon.drag_k * velocity.length() * velocity
++
++func _drag_path(initial_velocity: Vector3) -> Array[Vector3]:
++	var points: Array[Vector3] = [Vector3.ZERO]
++	var position := Vector3.ZERO
++	var velocity := initial_velocity
++	for _step in range(ceili(settings.weapon.lifetime / DRAG_STEP) + 1):
++		var a1 := _drag_acc(velocity)
++		var v2 := velocity + a1 * (DRAG_STEP * 0.5)
++		var a2 := _drag_acc(v2)
++		var v3 := velocity + a2 * (DRAG_STEP * 0.5)
++		var a3 := _drag_acc(v3)
++		var v4 := velocity + a3 * DRAG_STEP
++		var a4 := _drag_acc(v4)
++		position += (velocity + 2.0 * v2 + 2.0 * v3 + v4) * (DRAG_STEP / 6.0)
++		velocity += (a1 + 2.0 * a2 + 2.0 * a3 + a4) * (DRAG_STEP / 6.0)
++		points.append(position)
++		if position.z < -2.0:
++			break
++	return points
++
+ func bullet_position(bullet: Dictionary, at: float) -> Vector3:
+ 	var age = maxf(0.0, at - bullet.born)
++	if bullet.has("drag_points"):
++		var points: Array = bullet.drag_points
++		var index := mini(int(age / DRAG_STEP), points.size() - 2)
++		var fraction := clampf(age / DRAG_STEP - index, 0.0, 1.0)
++		return bullet.origin + points[index].lerp(points[index + 1], fraction)
+ 	return bullet.origin + bullet.velocity * age + Vector3(0, 0, -0.5 * settings.weapon.gravity * age * age)
+ 
+ 
+@@ -468,7 +500,8 @@
+ 			"quaternion_wxyz": [orientation.w, orientation.x, orientation.y, orientation.z]},
+ 		"weapon": {"speed": settings.weapon.speed, "rate": settings.weapon.rate,
+ 			"delay": settings.weapon.delay, "barrel_length": settings.gimbal.barrel_length,
+-			"gravity": settings.weapon.gravity, "damage": settings.weapon.damage},
++			"gravity": settings.weapon.gravity, "drag_k": settings.weapon.drag_k,
++			"damage": settings.weapon.damage},
+ 		"health": {"current": health, "maximum": max_health, "alive": health > 0,
+ 			"death_time": death_time},
+ 		"appearance": settings.appearance.duplicate(),
